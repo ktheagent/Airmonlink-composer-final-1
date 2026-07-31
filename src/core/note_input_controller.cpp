@@ -21,7 +21,7 @@ std::optional<GhostNote> NoteInputController::preview(
 std::optional<NoteEvent> NoteInputController::commit(
     Point client, const ViewTransform& transform) {
   const auto ghost = preview(client, transform);
-  if (!ghost || !ghost->valid) return std::hullopt;
+  if (!ghost || !ghost->valid) return std::nullopt;
   const auto& stored = score_.addNote(ghost->target.midiPitch,
                                         ghost->target.onsetBeats,
                                         ghost->duration, ghost->voice);
