@@ -61,15 +61,40 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           $ErrorActionPreference = "Stop"
-          ctest --test-dir build -C Release --output-on-failure --output-junit evidence\test-results.xml 2>&1 |
+          $junit = Join-Path $PWD 'evidence\test-results.xml'
+          ctest --test-dir build -C Release --output-on-failure --output-junit "$junit" 2>&1 |
             Tee-Object -FilePath evidence\ctest.log
           $ctestExit = $LASTEXITCODE
-          [xml]$xml = Get-Content evidence\test-results.xml
-          $suite = $xml.testsuite
-          "tests_total=$($suite.tests)" | Add-Content evidence\build-evidence.txt
-          "tests_failed=$($suite.failures)" | Add-Content evidence\build-evidence.txt
-          "tests_skipped=$($suite.skipped)" | Add-Content evidence\build-evidence.txt
-          "tests_passed=$([int]$suite.tests - [int]$suite.failures - [int]$suite.skipped)" | Add-Content evidence\build-evidence.txt
+
+          if (-not (Test-Path -LiteralPath $junit)) {
+            throw "CTest did not create the JUnit report at $junit."
+          }
+
+          [xml]$xml = Get-Content -LiteralPath $junit -Raw
+          $suites = @()
+          if ($xml.testsuites) {
+            $suites = @($xml.testsuites.testsuite)
+          } elseif ($xml.testsuite) {
+            $suites = @($xml.testsuite)
+          } else {
+            throw "CTest JUnit report has no testsuite element."
+          }
+
+          $total = 0
+          $failed = 0
+          $skipped = 0
+          foreach ($suite in $suites) {
+            $total += [int]$suite.tests
+            $failed += [int]$suite.failures
+            $skipped += [int]$suite.skipped
+          }
+          $passed = $total - $failed - $skipped
+
+          "tests_total=$total" | Add-Content evidence\build-evidence.txt
+          "tests_failed=$failed" | Add-Content evidence\build-evidence.txt
+          "tests_skipped=$skipped" | Add-Content evidence\build-evidence.txt
+          "tests_passed=$passed" | Add-Content evidence\build-evidence.txt
+
           if ($ctestExit -ne 0) { throw "CTest failed." }
 
       - name: Verify Release executable and embedded commit
@@ -81,25 +106,37 @@ jobs:
             "build\Release\AirmonlinkComposer.exe",
             "build\AirmonlinkComposer\Release\AirmonlinkComposer.exe"
           )
+
           $exe = $expectedPaths |
             Where-Object { Test-Path -LiteralPath $_ } |
             Select-Object -First 1
+
           if (-not $exe) {
             Write-Host "Executables actually produced:"
             Get-ChildItem -Path build -Filter "*.exe" -File -Recurse |
               ForEach-Object { Write-Host $_.FullName }
+
             throw "The expected Release AirmonlinkComposer.exe was not produced."
           }
+
           $file = Get-Item -LiteralPath $exe
           $hash = Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256
+
           Write-Host "Executable: $($file.FullName)"
           Write-Host "Size: $($file.Length)"
           Write-Host "SHA-256: $($hash.Hash)"
-          if ($file.Length -le 0) { throw "The executable is empty." }
-          if ($file.FullName -notlike '*\Release\*') { throw "Executable is not from Release configuration." }
+
+          if ($file.Length -le 0) {
+            throw "The executable is empty."
+          }
+
+          if ($file.FullName -notlike '*\Release\*') {
+            throw "Executable is not from Release configuration."
+          }
 
           $identity = (& $file.FullName --version | Out-String).Trim()
           Write-Host "Identity: $identity"
+
           if ($identity -notmatch [regex]::Escape('${{ github.sha }}')) {
             throw "Packaged executable does not embed the workflow source commit."
           }
@@ -118,9 +155,11 @@ jobs:
           $stage = Join-Path $PWD 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item '${{ steps.executable.outputs.exe }}' (Join-Path $stage 'AirmonlinkComposer.exe')
+
           windeployqt --release --compiler-runtime --no-translations (Join-Path $stage 'AirmonlinkComposer.exe') 2>&1 |
             Tee-Object -FilePath evidence\windeployqt.log
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed." }
+
           if (-not (Test-Path -LiteralPath (Join-Path $stage 'platforms\qwindows.dll'))) {
             throw "platforms\qwindows.dll is missing."
           }
@@ -129,11 +168,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
           Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/steinbergmedia/bravura/master/redist/otf/Bravura.otf' -OutFile (Join-Path $fontDir 'Bravura.otf')
           Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/steinbergmedia/bravura/master/LICENSE.txt' -OutFile (Join-Path $fontDir 'Bravura-LICENSE.txt')
+
           if ((Get-Item (Join-Path $fontDir 'Bravura.otf')).Length -le 0) { throw "Bravura font is empty." }
           if ((Get-Item (Join-Path $fontDir 'Bravura-LICENSE.txt')).Length -le 0) { throw "Bravura licence is empty." }
 
           Copy-Item README.md $stage
           Copy-Item docs\DEPENDENCIES.md $stage
+
           @"
           product=Airmonlink Composer Native
           version=0.1.0
@@ -152,13 +193,26 @@ jobs:
           $env:AIRMON_STARTUP_LOG_PATH = Join-Path $PWD 'evidence\startup.log'
           $process = Start-Process (Join-Path $stage 'AirmonlinkComposer.exe') -PassThru
           Start-Sleep -Seconds 5
-          if ($process.HasExited) { throw "Packaged application exited during startup with code $($process.ExitCode)." }
-          if (-not (Test-Path -LiteralPath $env:AIRMON_STARTUP_LOG_PATH)) { throw "Startup log was not created." }
+
+          if ($process.HasExited) {
+            throw "Packaged application exited during startup with code $($process.ExitCode)."
+          }
+
+          if (-not (Test-Path -LiteralPath $env:AIRMON_STARTUP_LOG_PATH)) {
+            throw "Startup log was not created."
+          }
+
           $startup = Get-Content -LiteralPath $env:AIRMON_STARTUP_LOG_PATH -Raw
-          if ($startup -notmatch 'initialized') { throw "Application did not report initialized state." }
-          if ($startup -notmatch [regex]::Escape('${{ github.sha }}')) { throw "Startup log does not match audited commit." }
+          if ($startup -notmatch 'initialized') {
+            throw "Application did not report initialized state."
+          }
+          if ($startup -notmatch [regex]::Escape('${{ github.sha }}')) {
+            throw "Startup log does not match audited commit."
+          }
+
           Stop-Process -Id $process.Id -Force
           $process.WaitForExit()
+
           "startup_smoke=passed" | Add-Content evidence\build-evidence.txt
           "qwindows_present=true" | Add-Content evidence\build-evidence.txt
           "bravura_present=true" | Add-Content evidence\build-evidence.txt
@@ -169,11 +223,14 @@ jobs:
           $ErrorActionPreference = "Stop"
           $folder = 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable'
           $zip = 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip'
+
           Get-ChildItem -LiteralPath $folder -File -Recurse |
             ForEach-Object { $_.FullName.Substring((Resolve-Path $folder).Path.Length + 1) } |
             Sort-Object | Set-Content evidence\artifact-contents.txt
+
           Compress-Archive -Path "$folder\*" -DestinationPath $zip -Force
           $zipHash = Get-FileHash -LiteralPath $zip -Algorithm SHA256
+
           "artifact_name=Airmonlink-Composer-Native-0.1.0-Windows-Portable" | Add-Content evidence\build-evidence.txt
           "artifact_zip_sha256=$($zipHash.Hash)" | Add-Content evidence\build-evidence.txt
           "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" | Add-Content evidence\build-evidence.txt
