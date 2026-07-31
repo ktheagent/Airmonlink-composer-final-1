@@ -11,13 +11,13 @@
 #define AIRMON_APP_VERSION "0.1.0"
 #endif
 
-ifndef AIRMON_GIT_SHA
+#ifndef AIRMON_GIT_SHA
 #define AIRMON_GIT_SHA "unknown"
 #endif
 
 namespace {
-void writeStartupLog(const QString&message) {
-  const QString path = qvar("AIRMON_STARTUP_LOG_PATH");
+void writeStartupLog(const QString& message) {
+  const QString path = qVar("AIRMON_STARTUP_LOG_PATH");
   if (path.isEmpty()) {
     return;
   }
@@ -49,6 +49,6 @@ int main(int argc, char** argv) {
   window.show();
   QTimer::singleShot(1000, []() { writeStartupLog("initialized"); });
   const int result = app.exec();
-  writeStartupLog("exit " + QString:0number(result));
+  writeStartupLog("exit " + QString::number(result));
   return result;
 }
