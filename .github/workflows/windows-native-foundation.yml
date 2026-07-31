@@ -10,18 +10,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: native-foundation-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   windows:
-    name: Windows MSVC 2022 / Qt 6.8.3
     runs-on: windows-2022
     timeout-minutes: 30
 
     steps:
-      - name: Check out exact source
+      - name: Check out source
         uses: actions/checkout@v4
 
       - name: Install Qt
@@ -31,83 +26,165 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
-      - name: Configure real Qt application
+      - name: Record toolchain
         shell: pwsh
-        run: >
-          cmake -S . -B build
-          -G "Visual Studio 17 2022"
-          -A x64
-          -DAIRMON_BUILD_QT_APP=ON
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          "commit=${{ github.sha }}" | Set-Content evidence\build-evidence.txt
+          "qt_version=$(qmake -query QT_VERSION)" | Add-Content evidence\build-evidence.txt
+          "qt_prefix=$(qmake -query QT_INSTALL_PREFIX)" | Add-Content evidence\build-evidence.txt
+          $cl = cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl 2>&1"
+          "compiler=$($cl -join ' ')" | Add-Content evidence\build-evidence.txt
+          "architecture=x64" | Add-Content evidence\build-evidence.txt
+
+      - name: Configure real Qt desktop application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAIRMON_BUILD_QT_APP=ON 2>&1 |
+            Tee-Object -FilePath evidence\cmake-configure.log
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
+          "cmake_configure=passed" | Add-Content evidence\build-evidence.txt
 
       - name: Build Release application and tests
-        run: cmake --build build --config Release --parallel
-
-      - name: Run tests
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/test-results.xml
-
-      - name: Verify embedded version and commit
-        id: identity
         shell: pwsh
         run: |
-          $exe = Get-ChildItem build -Filter AirmonlinkComposer.exe -Recurse |
-            Where-Object { $_.FullName -match '\Release\' } |
+          $ErrorActionPreference = "Stop"
+          cmake --build build --config Release --parallel 2>&1 |
+            Tee-Object -FilePath evidence\build.log
+          if ($LASTEXITCODE -ne 0) { throw "Release build failed." }
+
+      - name: Run native core and Qt tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $ErrorActionPreference = "Stop"
+          ctest --test-dir build -C Release --output-on-failure --output-junit evidence\test-results.xml 2>&1 |
+            Tee-Object -FilePath evidence\ctest.log
+          $ctestExit = $LASTEXITCODE
+          [xml]$xml = Get-Content evidence\test-results.xml
+          $suite = $xml.testsuite
+          "tests_total=$($suite.tests)" | Add-Content evidence\build-evidence.txt
+          "tests_failed=$($suite.failures)" | Add-Content evidence\build-evidence.txt
+          "tests_skipped=$($suite.skipped)" | Add-Content evidence\build-evidence.txt
+          "tests_passed=$([int]$suite.tests - [int]$suite.failures - [int]$suite.skipped)" | Add-Content evidence\build-evidence.txt
+          if ($ctestExit -ne 0) { throw "CTest failed." }
+
+      - name: Verify Release executable and embedded commit
+        id: executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedPaths = @(
+            "build\Release\AirmonlinkComposer.exe",
+            "build\AirmonlinkComposer\Release\AirmonlinkComposer.exe"
+          )
+          $exe = $expectedPaths |
+            Where-Object { Test-Path -LiteralPath $_ } |
             Select-Object -First 1
-          if (-not $exe) { throw "AirmonlinkComposer.exe was not produced." }
-
-          $identity = (& $exe.FullName --version | Out-String).Trim()
-          Write-Host $identity
-          if ($identity -notmatch 'Airmonlink Composer Native 0\.1\.0') {
-            throw "Executable version identity is incorrect: $identity"
+          if (-not $exe) {
+            Write-Host "Executables actually produced:"
+            Get-ChildItem -Path build -Filter "*.exe" -File -Recurse |
+              ForEach-Object { Write-Host $_.FullName }
+            throw "The expected Release AirmonlinkComposer.exe was not produced."
           }
+          $file = Get-Item -LiteralPath $exe
+          $hash = Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256
+          Write-Host "Executable: $($file.FullName)"
+          Write-Host "Size: $($file.Length)"
+          Write-Host "SHA-256: $($hash.Hash)"
+          if ($file.Length -le 0) { throw "The executable is empty." }
+          if ($file.FullName -notlike '*\Release\*') { throw "Executable is not from Release configuration." }
+
+          $identity = (& $file.FullName --version | Out-String).Trim()
+          Write-Host "Identity: $identity"
           if ($identity -notmatch [regex]::Escape('${{ github.sha }}')) {
-            throw "Executable does not report the workflow source commit."
+            throw "Packaged executable does not embed the workflow source commit."
           }
 
-          "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
-          "identity=$identity" >> $env:GITHUB_OUTPUT
+          "executable=$($file.FullName)" | Add-Content evidence\build-evidence.txt
+          "executable_size=$($file.Length)" | Add-Content evidence\build-evidence.txt
+          "executable_sha256=$($hash.Hash)" | Add-Content evidence\build-evidence.txt
+          "release_configuration=true" | Add-Content evidence\build-evidence.txt
+          "embedded_identity=$identity" | Add-Content evidence\build-evidence.txt
+          "exe=$($file.FullName)" >> $env:GITHUB_OUTPUT
 
-      - name: Stage portable application
+      - name: Assemble independent portable package
         shell: pwsh
         run: |
-          $stage = Join-Path $PWD 'stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable'
+          $ErrorActionPreference = "Stop"
+          $stage = Join-Path $PWD 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item '${{ steps.identity.outputs.exe }}' (Join-Path $stage 'AirmonlinkComposer.exe')
-          Copy-Item README.md $stage
-          Copy-Item docs/DEPENDENCIES.md $stage
-          Copy-Item docs/MILESTONE-0-STATUS.md $stage
-          Copy-Item Airmonlink-Composer-Native-Foundation-0.1.0-Source.zip.sha256 $stage
+          Copy-Item '${{ steps.executable.outputs.exe }}' (Join-Path $stage 'AirmonlinkComposer.exe')
+          windeployqt --release --compiler-runtime --no-translations (Join-Path $stage 'AirmonlinkComposer.exe') 2>&1 |
+            Tee-Object -FilePath evidence\windeployqt.log
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed." }
+          if (-not (Test-Path -LiteralPath (Join-Path $stage 'platforms\qwindows.dll'))) {
+            throw "platforms\qwindows.dll is missing."
+          }
 
+          $fontDir = Join-Path $stage 'resources\fonts'
+          New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/steinbergmedia/bravura/master/redist/otf/Bravura.otf' -OutFile (Join-Path $fontDir 'Bravura.otf')
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/steinbergmedia/bravura/master/LICENSE.txt' -OutFile (Join-Path $fontDir 'Bravura-LICENSE.txt')
+          if ((Get-Item (Join-Path $fontDir 'Bravura.otf')).Length -le 0) { throw "Bravura font is empty." }
+          if ((Get-Item (Join-Path $fontDir 'Bravura-LICENSE.txt')).Length -le 0) { throw "Bravura licence is empty." }
+
+          Copy-Item README.md $stage
+          Copy-Item docs\DEPENDENCIES.md $stage
           @"
           product=Airmonlink Composer Native
           version=0.1.0
           commit=${{ github.sha }}
           workflow=${{ github.workflow }}
-          run_id=${{ github.run_id }}
+          run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           "@ | Set-Content -Encoding UTF8 (Join-Path $stage 'BUILD-MANIFEST.txt')
 
-          windeployqt --release --compiler-runtime --no-translations (Join-Path $stage 'AirmonlinkComposer.exe')
-
-          $env:QT_QPA_PLATFORM = 'offscreen'
+      - name: Packaged startup smoke test
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stage = Join-Path $PWD 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable'
+          $env:AIRMON_STARTUP_LOG_PATH = Join-Path $PWD 'evidence\startup.log'
           $process = Start-Process (Join-Path $stage 'AirmonlinkComposer.exe') -PassThru
-          Start-Sleep -Seconds 3
-          if ($process.HasExited) {
-            throw "The staged application exited during the launch smoke check with code $($process.ExitCode)."
-          }
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) { throw "Packaged application exited during startup with code $($process.ExitCode)." }
+          if (-not (Test-Path -LiteralPath $env:AIRMON_STARTUP_LOG_PATH)) { throw "Startup log was not created." }
+          $startup = Get-Content -LiteralPath $env:AIRMON_STARTUP_LOG_PATH -Raw
+          if ($startup -notmatch 'initialized') { throw "Application did not report initialized state." }
+          if ($startup -notmatch [regex]::Escape('${{ github.sha }}')) { throw "Startup log does not match audited commit." }
           Stop-Process -Id $process.Id -Force
           $process.WaitForExit()
+          "startup_smoke=passed" | Add-Content evidence\build-evidence.txt
+          "qwindows_present=true" | Add-Content evidence\build-evidence.txt
+          "bravura_present=true" | Add-Content evidence\build-evidence.txt
 
-          Compress-Archive -Path $stage -DestinationPath 'stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip' -Force
-          if ((Get-Item 'stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip').Length -le 0) {
-            throw "Portable ZIP is missing or empty."
-          }
+      - name: Create portable ZIP and inventory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $folder = 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable'
+          $zip = 'stage\Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip'
+          Get-ChildItem -LiteralPath $folder -File -Recurse |
+            ForEach-Object { $_.FullName.Substring((Resolve-Path $folder).Path.Length + 1) } |
+            Sort-Object | Set-Content evidence\artifact-contents.txt
+          Compress-Archive -Path "$folder\*" -DestinationPath $zip -Force
+          $zipHash = Get-FileHash -LiteralPath $zip -Algorithm SHA256
+          "artifact_name=Airmonlink-Composer-Native-0.1.0-Windows-Portable" | Add-Content evidence\build-evidence.txt
+          "artifact_zip_sha256=$($zipHash.Hash)" | Add-Content evidence\build-evidence.txt
+          "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" | Add-Content evidence\build-evidence.txt
 
-      - name: Upload test report
+      - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Airmonlink-Composer-Native-0.1.0-Test-Report
-          path: build/test-results.xml
-          if-no-files-found: warn
+          name: Airmonlink-Composer-Native-0.1.0-Build-Evidence
+          path: evidence
+          if-no-files-found: error
 
       - name: Upload Windows portable artifact
         uses: actions/upload-artifact@v4
