@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -27,6 +28,16 @@ int main() {
          "rational addition is exact");
   expect(beats(Duration::Sixteenth) == Rational(1, 4),
          "sixteenth duration is one quarter beat");
+
+  bool overflowRejected = false;
+  try {
+    const auto ignored =
+        Rational(std::numeric_limits<std::int64_t>::max()) + Rational(1);
+    (void)ignored;
+  } catch (const std::overflow_error&) {
+    overflowRejected = true;
+  }
+  expect(overflowRejected, "rational overflow is rejected");
 
   StaffGeometry geometry;
   CoordinateMapper mapper(geometry);
@@ -57,6 +68,9 @@ int main() {
              committed->onsetBeats == topLine->target.onsetBeats,
          "commit onset equals preview onset");
 
+  const std::string originalId = committed ? committed->id : std::string{};
+  const std::string originalSerialized = score.deterministicText();
+
   const auto duplicate = input.preview(
       {geometry.staffLeft, geometry.firstSystemTop}, normal);
   expect(duplicate && !duplicate->valid,
@@ -71,6 +85,21 @@ int main() {
   expect(score.notes().empty(), "undo removes note");
   expect(input.redo(), "note entry redo succeeds");
   expect(score.notes().size() == 1, "redo restores note");
+  expect(score.notes().front().id == originalId,
+         "redo preserves the original semantic note ID");
+  expect(score.deterministicText() == originalSerialized,
+         "undo and redo restore byte-identical serialized state");
+
+  bool duplicateIdRejected = false;
+  try {
+    score.restoreNote(score.notes().front());
+  } catch (const std::invalid_argument&) {
+    duplicateIdRejected = true;
+  }
+  expect(duplicateIdRejected,
+         "restoring an existing semantic ID is rejected");
+  expect(score.notes().size() == 1,
+         "duplicate-ID restore failure is atomic");
 
   bool rejectedMixedDuration = false;
   try {
@@ -114,7 +143,8 @@ int main() {
          "cancel removes ghost without mutation");
 
   if (failures == 0) {
-    std::cout << "PASS: exact-time native vertical-slice core tests\n";
+    std::cout
+        << "PASS: exact-time stable-identity native vertical-slice core tests\n";
   }
   return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
