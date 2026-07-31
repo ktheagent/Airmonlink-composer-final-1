@@ -1,0 +1,117 @@
+name: Validate and Build Windows Native Foundation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows MSVC 2022 / Qt 6.8.3
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout8v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Configure real Qt application
+        shell: pwsh
+        run: >
+          cmake -S . -B build
+          -G "Visual Studio 17 2022"
+          -A x64
+          -DAIRMON_BUILD_QT_APP=ON
+
+      - name: Build Release application and tests
+        run: cmake --build build --config Release --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/test-results.xml
+
+      - name: Verify embedded version and commit
+        id: identity
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build -Filter AirmonlinkComposer.exe -Recurse |
+            Where-Object { $_.FullName -match '\\Release\\' } |
+            Select-Object -First 1
+          if (-not $exe) { throw "AirmonlinkComposer.exe was not produced." }
+
+          $identity = (& $exe.FullName --version | Out-String).Trim()
+          Write-Host $identity
+          if ($identity -notmatch 'Airmonlink Composer Native 0\.1\.0') {
+            throw "Executable version identity is incorrect: $identity"
+          }
+          if ($identity -notmatch [regex]::Escape('${{ github.sha }}')) {
+            throw "Executable does not report the workflow source commit."
+          }
+
+          "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "identity=$identity" >> $env:GITHUB_OUTPUT
+
+      - name: Stage portable application
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD 'stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item '${{ steps.identity.outputs.exe }}' (Join-Path $stage 'AirmonlinkComposer.exe')
+          Copy-Item README.md $stage
+          Copy-Item docs/DEPENDENCIES.md $stage
+          Copy-Item docs/MILESTONE-0-STATUS.md $stage
+          Copy-Item Airmonlink-Composer-Native-Foundation-0.1.0-Source.zip.sha256 $stage
+
+          @"
+          product=Airmonlink Composer Native
+          version=0.1.0
+          commit=${{ github.sha }}
+          workflow=${{ github.workflow }}
+          run_id=${{ github.run_id }}
+          "@ | Set-Content -Encoding UTF8 (Join-Path $stage 'BUILD-MANIFEST.txt')
+
+          windeployqt --release --compiler-runtime --no-translations (Join-Path $stage 'AirmonlinkComposer.exe')
+
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $process = Start-Process (Join-Path $stage 'AirmonlinkComposer.exe') -PassThru
+          Start-Sleep -Seconds 3
+          if ($process.HasExited) {
+            throw "The staged application exited during the launch smoke check with code $($process.ExitCode)."
+          }
+          Stop-Process -Id $process.Id -Force
+          $process.WaitForExit()
+
+          Compress-Archive -Path $stage -DestinationPath 'stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip' -Force
+          if ((Get-Item 'stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip').Length -le 0) {
+            throw "Portable ZIP is missing or empty."
+          }
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Airmonlink-Composer-Native-0.1.0-Test-Report
+          path: build/test-results.xml
+          if-no-files-found: warn
+
+      - name: Upload Windows portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Airmonlink-Composer-Native-0.1.0-Windows-Portable
+          path: stage/Airmonlink-Composer-Native-0.1.0-Windows-Portable.zip
+          if-no-files-found: error
