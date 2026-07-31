@@ -17,7 +17,7 @@
 
 namespace {
 void writeStartupLog(const QString& message) {
-  const QString path = qVar("AIRMON_STARTUP_LOG_PATH");
+  const QString path = qEnvironmentVariable("AIRMON_STARTUP_LOG_PATH");
   if (path.isEmpty()) {
     return;
   }
