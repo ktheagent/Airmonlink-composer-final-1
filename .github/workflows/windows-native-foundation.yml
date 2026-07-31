@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Check out exact source
-        uses: actions/checkout8v4
+        uses: actions/checkout@v4
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -50,7 +50,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-ChildItem build -Filter AirmonlinkComposer.exe -Recurse |
-            Where-Object { $_.FullName -match '\\Release\\' } |
+            Where-Object { $_.FullName -match '\Release\' } |
             Select-Object -First 1
           if (-not $exe) { throw "AirmonlinkComposer.exe was not produced." }
 
