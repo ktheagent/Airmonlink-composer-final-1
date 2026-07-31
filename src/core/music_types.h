@@ -1,7 +1,8 @@
 #pragma once
 
+#include "core/rational.h"
+
 #include <cstdint>
-#include <optional>
 #include <string>
 
 namespace airmon {
@@ -9,23 +10,23 @@ namespace airmon {
 enum class Voice : std::uint8_t { One = 1, Two = 2, Three = 3, Four = 4 };
 enum class Duration : std::uint8_t { Whole, Half, Quarter, Eighth, Sixteenth, ThirtySecond, SixtyFourth };
 
-inline double beats(Duration value) {
+inline Rational beats(Duration value) {
   switch (value) {
-    case Duration::Whole: return 4.0;
-    case Duration::Half: return 2.0;
-    case Duration::Quarter: return 1.0;
-    case Duration::Eighth: return 0.5;
-    case Duration::Sixteenth: return 0.25;
-    case Duration::ThirtySecond: return 0.125;
-    case Duration::SixtyFourth: return 0.0625;
+    case Duration::Whole: return Rational(4);
+    case Duration::Half: return Rational(2);
+    case Duration::Quarter: return Rational(1);
+    case Duration::Eighth: return Rational(1, 2);
+    case Duration::Sixteenth: return Rational(1, 4);
+    case Duration::ThirtySecond: return Rational(1, 8);
+    case Duration::SixtyFourth: return Rational(1, 16);
   }
-  return 1.0;
+  throw std::invalid_argument("Unsupported duration.");
 }
 
 struct NoteEvent {
   std::string id;
   int midiPitch{60};
-  double onsetBeats{0.0};
+  Rational onsetBeats{};
   Duration duration{Duration::Quarter};
   Voice voice{Voice::One};
   bool tieFromPrevious{false};
@@ -41,7 +42,7 @@ struct PointerTarget {
   std::size_t systemIndex{};
   std::size_t staffIndex{};
   std::size_t measureIndex{};
-  double onsetBeats{};
+  Rational onsetBeats{};
   int midiPitch{};
   Point snappedPagePoint{};
 };
