@@ -18,6 +18,7 @@ add_library(airmon_core
   src/core/score_model.cpp
   src/core/coordinate_mapper.cpp
   src/core/note_input_controller.cpp
+  src/core/plugin_manifest.cpp
 )
 target_include_directories(airmon_core PUBLIC src)
 airmon_enable_warnings(airmon_core)
@@ -27,6 +28,11 @@ add_executable(airmon_core_tests tests/core_tests.cpp)
 target_link_libraries(airmon_core_tests PRIVATE airmon_core)
 airmon_enable_warnings(airmon_core_tests)
 add_test(NAME airmon_core_tests COMMAND airmon_core_tests)
+
+add_executable(airmon_plugin_manifest_tests tests/plugin_manifest_tests.cpp)
+target_link_libraries(airmon_plugin_manifest_tests PRIVATE airmon_core)
+airmon_enable_warnings(airmon_plugin_manifest_tests)
+add_test(NAME airmon_plugin_manifest_tests COMMAND airmon_plugin_manifest_tests)
 
 option(AIRMON_BUILD_QT_APP "Build the Qt 6 desktop application" ON)
 if(AIRMON_BUILD_QT_APP)
