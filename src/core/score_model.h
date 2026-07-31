@@ -2,6 +2,7 @@
 
 #include "core/music_types.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,7 +18,9 @@ class ScoreModel {
   int beatsPerMeasure() const noexcept { return beatsPerMeasure_; }
   Rational totalBeats() const noexcept;
 
-  const NoteEvent& addNote(int midiPitch, Rational onset, Duration duration, Voice voice);
+  const NoteEvent& addNote(int midiPitch, Rational onset,
+                           Duration duration, Voice voice);
+  const NoteEvent& restoreNote(const NoteEvent& note);
   bool removeNote(const std::string& id);
   std::optional<NoteEvent> findNote(const std::string& id) const;
   bool canPlace(int midiPitch, Rational onset, Duration duration, Voice voice,
@@ -25,9 +28,12 @@ class ScoreModel {
   std::string deterministicText() const;
 
  private:
-  std::string nextId(int midiPitch, Rational onset, Duration duration, Voice voice) const;
+  const NoteEvent& insertValidated(NoteEvent note);
+  std::string nextId(int midiPitch, Rational onset,
+                     Duration duration, Voice voice);
   std::size_t measureCount_;
   int beatsPerMeasure_;
+  std::uint64_t nextSequence_{1};
   std::vector<NoteEvent> notes_;
 };
 
