@@ -11,6 +11,15 @@ ScoreView::ScoreView(QWidget* parent)
   setMinimumSize(900, 700);
 }
 
+void ScoreView::refreshGhost() {
+  if (!lastPointerClient_) {
+    ghost_.reset();
+    return;
+  }
+  ghost_ = input_.preview(*lastPointerClient_, {});
+  update();
+}
+
 QColor ScoreView::voiceColor(Voice voice, int alpha) const {
   switch (voice) {
     case Voice::One: return QColor(36, 112, 255, alpha);
@@ -29,7 +38,6 @@ void ScoreView::paintEvent(QPaintEvent*) {
              Qt::white);
   p.setRenderHint(QPainter::Antialiasing);
   p.setPen(QPen(QColor(28, 28, 30), 1.0));
-
   for (std::size_t system = 0; system < geometry_.systems; ++system) {
     const double top =
         geometry_.firstSystemTop + system * geometry_.systemGap;
@@ -94,19 +102,18 @@ void ScoreView::paintEvent(QPaintEvent*) {
 }
 
 void ScoreView::mouseMoveEvent(QMouseEvent* event) {
-  ghost_ = input_.preview(
-      {event->position().x(), event->position().y()}, {});
-  update();
+  lastPointerClient_ = Point{event->position().x(), event->position().y()};
+  refreshGhost();
 }
 
 void ScoreView::mousePressEvent(QMouseEvent* event) {
-  input_.commit({event->position().x(), event->position().y()}, {});
-  ghost_ = input_.preview(
-      {event->position().x(), event->position().y()}, {});
-  update();
+  lastPointerClient_ = Point{event->position().x(), event->position().y()};
+  input_.commit(*lastPointerClient_, {});
+  refreshGhost();
 }
 
 void ScoreView::leaveEvent(QEvent*) {
+  lastPointerClient_.reset();
   ghost_.reset();
   input_.cancelPreview();
   update();
