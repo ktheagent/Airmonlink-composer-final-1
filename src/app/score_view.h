@@ -15,11 +15,11 @@ class ScoreView final : public QWidget {
 
   void setDuration(Duration value) {
     input_.setDuration(value);
-    update();
+    refreshGhost();
   }
   void setVoice(Voice value) {
     input_.setVoice(value);
-    update();
+    refreshGhost();
   }
   Duration duration() const noexcept { return input_.duration(); }
   Voice voice() const noexcept { return input_.voice(); }
@@ -42,11 +42,13 @@ class ScoreView final : public QWidget {
   void leaveEvent(QEvent*) override;
 
  private:
+  void refreshGhost();
   QColor voiceColor(Voice voice, int alpha = 255) const;
   ScoreModel score_;
   StaffGeometry geometry_;
   CoordinateMapper mapper_;
   NoteInputController input_;
   std::optional<GhostNote> ghost_;
+  std::optional<Point> lastPointerClient_;
 };
 }  // namespace airmon
