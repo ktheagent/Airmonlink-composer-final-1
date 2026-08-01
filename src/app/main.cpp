@@ -46,6 +46,11 @@ int main(int argc, char** argv) {
 
   writeStartupLog("starting " + identity);
   airmon::MainWindow window;
+  writeStartupLog(
+      QStringLiteral("smufl_font_bundled=%1")
+          .arg(window.property("smuflFontLoadedFromBundle").toBool()
+                   ? QStringLiteral("true")
+                   : QStringLiteral("false")));
   window.show();
   QTimer::singleShot(1000, []() { writeStartupLog("initialized"); });
   const int result = app.exec();
