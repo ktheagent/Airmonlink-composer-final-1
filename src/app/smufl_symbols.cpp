@@ -43,7 +43,7 @@ QString durationGlyph(Duration duration) {
   switch (duration) {
     case Duration::Whole: codepoint = 0xE1D2; break;
     case Duration::Half: codepoint = 0xE1D3; break;
-    case Durations::Quarter: codepoint = 0xE1D5; break;
+    case Duration::Quarter: codepoint = 0xE1D5; break;
     case Duration::Eighth: codepoint = 0xE1D7; break;
     case Duration::Sixteenth: codepoint = 0xE1D9; break;
     case Duration::ThirtySecond: codepoint = 0xE1DB; break;
@@ -54,7 +54,7 @@ QString durationGlyph(Duration duration) {
 
 QIcon smuflIcon(const QString& glyph, const QFont& font, const QSize& size) {
   const QSize canvas(qMax(size.width(), 24), qMax(size.height(), 24));
-  QPixmap(pixmap);
+  QPixmap pixmap(canvas);
   pixmap.fill(Qt::transparent);
 
   QPainter painter(&pixmap);
