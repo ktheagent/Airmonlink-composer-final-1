@@ -23,8 +23,15 @@ class NoteInputController {
 
   void setDuration(Duration value) noexcept { duration_ = value; }
   void setVoice(Voice value) noexcept { voice_ = value; }
-  std::optional<GhostNote> preview(Point client, const ViewTransform& transform) const;
-  std::optional<NoteEvent> commit(Point client, const ViewTransform& transform);
+  Duration duration() const noexcept { return duration_; }
+  Voice voice() const noexcept { return voice_; }
+
+  std::optional<GhostNote> preview(
+      Point client,
+      const ViewTransform& transform) const;
+  std::optional<NoteEvent> commit(
+      Point client,
+      const ViewTransform& transform);
   bool undo();
   bool redo();
   void cancelPreview() noexcept { previewVisible_ = false; }
