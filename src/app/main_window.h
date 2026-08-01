@@ -2,12 +2,18 @@
 
 #include "core/music_types.h"
 
+#include <QFont>
+#include <QKeySequence>
+#include <QList>
 #include <QMainWindow>
+#include <QString>
 
 class QAction;
 class QActionGroup;
 class QDockWidget;
 class QToolBar;
+class QCloseEvent;
+class QWidget;
 
 namespace airmon {
 
